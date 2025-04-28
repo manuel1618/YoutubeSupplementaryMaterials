@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QRadioButton,
@@ -25,6 +27,9 @@ class BeamDeflectionCalculator(QMainWindow):
         super().__init__()
         self.setWindowTitle("Beam Deflection Calculator")
         self.setGeometry(100, 100, 1200, 800)
+
+        # Initialize forces list
+        self.forces = []  # List of tuples (magnitude, position)
 
         # Material properties
         self.materials = {
@@ -262,9 +267,54 @@ class BeamDeflectionCalculator(QMainWindow):
         )
         input_layout.addWidget(self.material_info)
 
-        input_layout.addWidget(QLabel("Tip Load (N):"))
-        self.load_input = QLineEdit(self.default_load)
-        input_layout.addWidget(self.load_input)
+        # Support condition selection
+        input_layout.addWidget(QLabel("Support Condition:"))
+        self.support_group = QButtonGroup(self)
+        self.single_support_radio = QRadioButton("Single Support (Cantilever)")
+        self.both_ends_radio = QRadioButton("Both Ends Supported")
+        self.single_support_radio.setChecked(True)
+
+        for radio in [self.single_support_radio, self.both_ends_radio]:
+            self.support_group.addButton(radio)
+            input_layout.addWidget(radio)
+
+        # Multiple forces section
+        forces_label = QLabel("Forces")
+        forces_label.setStyleSheet("font-size: 12pt; font-weight: bold; margin: 10px;")
+        input_layout.addWidget(forces_label)
+
+        # Force list
+        self.force_list = QListWidget()
+        self.force_list.setMaximumHeight(150)
+        input_layout.addWidget(self.force_list)
+
+        # Force input section
+        force_input_widget = QWidget()
+        force_input_layout = QHBoxLayout(force_input_widget)
+
+        self.force_magnitude_input = QLineEdit()
+        self.force_magnitude_input.setPlaceholderText("Force (N)")
+        self.force_position_input = QLineEdit()
+        self.force_position_input.setPlaceholderText("Position (mm)")
+
+        force_input_layout.addWidget(QLabel("Force (N):"))
+        force_input_layout.addWidget(self.force_magnitude_input)
+        force_input_layout.addWidget(QLabel("Position (mm):"))
+        force_input_layout.addWidget(self.force_position_input)
+
+        input_layout.addWidget(force_input_widget)
+
+        # Add/Remove force buttons
+        force_buttons_widget = QWidget()
+        force_buttons_layout = QHBoxLayout(force_buttons_widget)
+
+        self.add_force_button = QPushButton("Add Force")
+        self.remove_force_button = QPushButton("Remove Force")
+
+        force_buttons_layout.addWidget(self.add_force_button)
+        force_buttons_layout.addWidget(self.remove_force_button)
+
+        input_layout.addWidget(force_buttons_widget)
 
         # Results display
         results_label = QLabel("Results")
@@ -298,7 +348,6 @@ class BeamDeflectionCalculator(QMainWindow):
         self.section_group.buttonClicked.connect(self.on_section_change)
         self.dimension_input.textChanged.connect(self.on_input_change)
         self.length_input.textChanged.connect(self.on_input_change)
-        self.load_input.textChanged.connect(self.on_input_change)
         self.material_combo.currentTextChanged.connect(self.on_material_change)
 
         # I-beam parameter connections
@@ -318,6 +367,11 @@ class BeamDeflectionCalculator(QMainWindow):
         # Square tube parameter connections
         self.square_tube_od_input.textChanged.connect(self.on_input_change)
         self.square_tube_thickness_input.textChanged.connect(self.on_input_change)
+
+        # Connect signals for force management
+        self.add_force_button.clicked.connect(self.add_force)
+        self.remove_force_button.clicked.connect(self.remove_force)
+        self.support_group.buttonClicked.connect(self.on_input_change)
 
         # Initial updates
         self.update_material_info()
@@ -352,17 +406,17 @@ class BeamDeflectionCalculator(QMainWindow):
     def calculate_section_properties(self):
         """Calculate area and moment of inertia based on section type"""
         if self.square_radio.isChecked():
-            d = float(self.dimension_input.text()) / 1000  # mm to m
-            return d**2, d**4 / 12
+            d = float(self.dimension_input.text())  # mm
+            return d**2, d**4 / 12  # mm², mm⁴
         elif self.circular_radio.isChecked():
-            d = float(self.dimension_input.text()) / 1000  # mm to m
+            d = float(self.dimension_input.text())  # mm
             r = d / 2
-            return np.pi * r**2, np.pi * r**4 / 64
+            return np.pi * r**2, np.pi * r**4 / 64  # mm², mm⁴
         elif self.i_beam_radio.isChecked():
-            h = float(self.i_height_input.text()) / 1000  # mm to m
-            b = float(self.i_width_input.text()) / 1000
-            tw = float(self.i_web_input.text()) / 1000
-            tf = float(self.i_flange_input.text()) / 1000
+            h = float(self.i_height_input.text())  # mm
+            b = float(self.i_width_input.text())  # mm
+            tw = float(self.i_web_input.text())  # mm
+            tf = float(self.i_flange_input.text())  # mm
 
             # Area calculation
             A_web = tw * (h - 2 * tf)
@@ -374,27 +428,27 @@ class BeamDeflectionCalculator(QMainWindow):
             I_flanges = 2 * (b * tf**3 / 12 + b * tf * ((h - tf) / 2) ** 2)
             I = I_web + I_flanges
 
-            return A, I
+            return A, I  # mm², mm⁴
         elif self.rect_radio.isChecked():
-            h = float(self.rect_height_input.text()) / 1000  # mm to m
-            b = float(self.rect_width_input.text()) / 1000
-            return b * h, b * h**3 / 12
+            h = float(self.rect_height_input.text())  # mm
+            b = float(self.rect_width_input.text())  # mm
+            return b * h, b * h**3 / 12  # mm², mm⁴
         elif self.tube_radio.isChecked():
-            do = float(self.tube_od_input.text()) / 1000  # mm to m
-            t = float(self.tube_thickness_input.text()) / 1000
+            do = float(self.tube_od_input.text())  # mm
+            t = float(self.tube_thickness_input.text())  # mm
             di = do - 2 * t
             ro = do / 2
             ri = di / 2
             A = np.pi * (ro**2 - ri**2)
             I = np.pi * (ro**4 - ri**4) / 4
-            return A, I
+            return A, I  # mm², mm⁴
         else:  # Square tube
-            a = float(self.square_tube_od_input.text()) / 1000  # mm to m
-            t = float(self.square_tube_thickness_input.text()) / 1000
+            a = float(self.square_tube_od_input.text())  # mm
+            t = float(self.square_tube_thickness_input.text())  # mm
             ai = a - 2 * t
             A = a**2 - ai**2
             I = (a**4 - ai**4) / 12
-            return A, I
+            return A, I  # mm², mm⁴
 
     def plot_cross_section(self, ax, dimension):
         """Plot cross section with annotations"""
@@ -601,8 +655,7 @@ class BeamDeflectionCalculator(QMainWindow):
                     return False
 
             length = float(self.length_input.text())
-            load = float(self.load_input.text())
-            return length > 0 and load >= 0
+            return length > 0
         except ValueError:
             return False
 
@@ -615,27 +668,26 @@ class BeamDeflectionCalculator(QMainWindow):
 
         try:
             # Get inputs
-            L = float(self.length_input.text()) / 1000  # Convert mm to m
-            P = float(self.load_input.text())  # Load in N
+            L = float(self.length_input.text())  # mm
             material = self.material_combo.currentText()
-            E = self.materials[material]["E"] * 1e6  # Convert MPa to Pa
-            density = self.materials[material]["density"]
+            E = self.materials[material]["E"]  # MPa
+            density = self.materials[material]["density"]  # kg/m³
 
             # Calculate cross-sectional properties
-            A, I = self.calculate_section_properties()
+            A, I = self.calculate_section_properties()  # mm², mm⁴
 
             # Calculate beam weight
-            weight = density * A * L  # kg
+            weight = density * A * L / 1e9  # kg (converting mm³ to m³)
 
             # Calculate deflection
             x = np.linspace(0, L, 100)
-            y = -(P * x**2 * (3 * L - x)) / (6 * E * I)
-            max_deflection = (P * L**3) / (3 * E * I)
+            y = self.calculate_deflection(x, L, E, I)
+            max_deflection = np.max(np.abs(y))
 
             # Update results
             self.weight_label.setText(f"Beam Weight: {weight:.3f} kg")
             self.deflection_label.setText(
-                f"Tip Deflection: {max_deflection*1000:.5f} mm"
+                f"Maximum Deflection: {max_deflection:.5f} mm"
             )
 
             # Plot cross section
@@ -647,7 +699,62 @@ class BeamDeflectionCalculator(QMainWindow):
             # Plot deflection curve
             self.deflection_figure.clear()
             ax = self.deflection_figure.add_subplot(111)
-            ax.plot(x * 1000, y * 1000, "b-", linewidth=2)
+            ax.plot(x, y, "b-", linewidth=2)
+
+            # Set initial y-limits based on deflection
+            y_max = max(abs(np.max(y)), abs(np.min(y)))
+            ax.set_ylim(-y_max * 1.5, y_max * 1.5)
+
+            # Plot force points and arrows
+            for P, a in self.forces:
+                # Plot force point
+                ax.plot(a, 0, "ro", markersize=8)
+
+                # Plot force arrow (smaller fixed length, direction matches force convention)
+                arrow_length = y_max * 0.3  # 30% of max deflection
+                if P < 0:  # Force points down (negative)
+                    ax.annotate(
+                        "",
+                        xy=(a, 0),
+                        xytext=(a, arrow_length),
+                        arrowprops=dict(arrowstyle="->", color="red", lw=2),
+                    )
+                    ax.annotate(
+                        f"{abs(P):.0f}N",
+                        (a, arrow_length),
+                        xytext=(10, 5),
+                        textcoords="offset points",
+                    )
+                else:  # Force points up (positive)
+                    ax.annotate(
+                        "",
+                        xy=(a, 0),
+                        xytext=(a, -arrow_length),
+                        arrowprops=dict(arrowstyle="->", color="red", lw=2),
+                    )
+                    ax.annotate(
+                        f"{abs(P):.0f}N",
+                        (a, -arrow_length),
+                        xytext=(10, -20),
+                        textcoords="offset points",
+                    )
+
+            # Plot support points
+            if self.single_support_radio.isChecked():
+                ax.plot(0, 0, "ks", markersize=10)
+                ax.annotate(
+                    "Support", (0, 0), xytext=(10, -20), textcoords="offset points"
+                )
+            else:
+                ax.plot(0, 0, "ks", markersize=10)
+                ax.plot(L, 0, "ks", markersize=10)
+                ax.annotate(
+                    "Support", (0, 0), xytext=(10, -20), textcoords="offset points"
+                )
+                ax.annotate(
+                    "Support", (L, 0), xytext=(10, -20), textcoords="offset points"
+                )
+
             ax.set_xlabel("Position along beam (mm)", fontsize=10)
             ax.set_ylabel("Deflection (mm)", fontsize=10)
             ax.set_title("Beam Deflection", pad=10, fontsize=14, fontweight="bold")
@@ -685,6 +792,76 @@ class BeamDeflectionCalculator(QMainWindow):
     def on_input_change(self):
         """Handle any input change"""
         self.calculate()
+
+    def add_force(self):
+        """Add a new force to the list"""
+        try:
+            magnitude = float(self.force_magnitude_input.text())
+            position = float(self.force_position_input.text())
+            L = float(self.length_input.text())
+
+            if magnitude == 0 or position < 0 or position > L:
+                return
+
+            self.forces.append((magnitude, position))
+            sign = "+" if magnitude > 0 else "-" if magnitude < 0 else ""
+            self.force_list.addItem(
+                f"Force: {sign}{abs(magnitude):.1f} N at {position:.1f} mm"
+            )
+
+            # Clear inputs
+            self.force_magnitude_input.clear()
+            self.force_position_input.clear()
+
+            self.calculate()
+
+        except ValueError:
+            pass
+
+    def remove_force(self):
+        """Remove selected force from the list"""
+        current_row = self.force_list.currentRow()
+        if current_row >= 0:
+            self.force_list.takeItem(current_row)
+            self.forces.pop(current_row)
+            self.calculate()
+
+    def calculate_deflection(self, x, L, E, I):
+        """Calculate deflection at point x considering all forces and support conditions
+        Sign convention: positive forces point upward, negative forces point downward
+        Positive deflection is upward"""
+        if not self.forces:
+            return np.zeros_like(x)
+        y = np.zeros_like(x)
+        if self.single_support_radio.isChecked():
+            # Cantilever beam with multiple forces
+            for P, a in self.forces:
+                # Negative P causes downward deflection
+                mask_before = x <= a
+                y[mask_before] += (
+                    P * x[mask_before] ** 2 * (3 * a - x[mask_before])
+                ) / (6 * E * I)
+                mask_after = x > a
+                y[mask_after] += (P * a**2 * (3 * x[mask_after] - a)) / (6 * E * I)
+        else:
+            # Simply supported beam with multiple forces (correct superposition)
+            for P, a in self.forces:
+                # Negative P causes downward deflection
+                b = L - a
+                mask_before = x < a
+                mask_after = x >= a
+                # For x < a
+                y[mask_before] += (
+                    P * b * x[mask_before] * (L**2 - b**2 - x[mask_before] ** 2)
+                ) / (6 * E * I * L)
+                # For x >= a
+                y[mask_after] += (
+                    P
+                    * a
+                    * (L - x[mask_after])
+                    * (2 * L * x[mask_after] - x[mask_after] ** 2 - a**2)
+                ) / (6 * E * I * L)
+        return y
 
 
 if __name__ == "__main__":
